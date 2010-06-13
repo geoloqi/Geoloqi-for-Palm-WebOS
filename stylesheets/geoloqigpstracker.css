@@ -1,0 +1,21 @@
+/* TODO: put your application-specific CSS here */
+
+html {
+	background-color: #2b2b2b;	
+}
+
+.palm-body-text .label {
+	float: left;
+	font-weight: bold;
+	margin-right: 10px;
+}
+.palm-body-text .position-row {
+	clear: both;
+}
+
+.geoloqi-filters .value {
+	float: left;
+	margin-left: -10px;
+}
+
+

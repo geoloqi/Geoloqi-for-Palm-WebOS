@@ -1,0 +1,9 @@
+{
+	"id": "com.geoloqi.geoloqigpstracker",
+	"version": "1.0.0",
+	"vendor": "Geoloqi",
+	"type": "web",
+	"main": "index.html",
+	"title": "Geoloqi GPS",
+	"icon": "icon.png"
+}

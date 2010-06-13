@@ -1,0 +1,48 @@
+<!-- TODO: replace the contents of this file with your own html -->
+<div id="main" class="palm-hasheader">
+	<div class="palm-header center" id="main-hdr">
+		Geoloqi GPS Tracker
+	</div>
+</div>
+
+<div class="palm-body-text">
+	<div class="position-row"><div class="label">Latitude:</div> <div id="latitude_area-to-update">&nbsp;</div></div>
+	<div class="position-row"><div class="label">Longitude:</div> <div id="longitude_area-to-update">&nbsp;</div></div>
+</div>
+
+<div class="palm-group geoloqi-filters">
+<div class="palm-group-title" x-mojo-loc=''>Filters</div>
+	<div class="palm-list">
+
+   		<div class="palm-row single">
+			<div class="palm-row-wrapper textfield-group" x-mojo-focus-highlight="true">
+				<div x-mojo-element="Slider" id="distanceFilterSlider" class="sliderClass" name="distanceFilterSlider"></div>
+				<div class="label">Min. Position Change</div>
+			</div>
+		</div>
+
+   		<div class="palm-row single">
+			<div class="palm-row-wrapper textfield-group" x-mojo-focus-highlight="true">
+				<div x-mojo-element="Slider" id="timeSlider" class="sliderClass" name="timeSlider"></div>
+				<div class="label">Min. Time Between Points</div>
+			</div>
+		</div>
+
+   		<div class="palm-row single">
+			<div class="palm-row-wrapper textfield-group" x-mojo-focus-highlight="true">
+				<div x-mojo-element="Slider" id="sendingIntervalSlider" class="sliderClass" name="sendingIntervalSlider"></div>
+				<div class="label">Sending Interval</div>
+			</div>
+		</div>
+
+	</div>
+</div>	
+	
+	
+
+<div class="palm-body-text">
+	<div id="error_area-to-update"></div>
+	<div id="num_points-to-update"></div>
+	<div id="num_queued-to-update"></div>
+</div>
+
