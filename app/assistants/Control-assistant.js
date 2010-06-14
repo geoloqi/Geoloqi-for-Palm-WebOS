@@ -11,6 +11,8 @@ function ControlAssistant() {
 	this.trackingEnabled = true;
 	this.sendingInterval = 10;
 	this.lastSentToServer = new Date();
+	this.lastSeenLat = "";
+	this.lastSeenLng = "";
 }
 
 ControlAssistant.prototype.setup = function() {
@@ -46,7 +48,7 @@ ControlAssistant.prototype.setup = function() {
 
 	this.CreateTable();
 	
-
+	/*
 	this.settings = new Mojo.Depot({
 		name: "Geoloqi Settings",
 		estimatedSize: 65536
@@ -63,7 +65,7 @@ ControlAssistant.prototype.setup = function() {
 	(function(obj){
 		Mojo.Log.info("Retrieved device key", obj);
 	}).bind(this));
-	
+	*/
 	
 	this.totalPoints = 0;
 	
@@ -161,7 +163,12 @@ ControlAssistant.prototype.sendQueuedPointsToServer = function(){
         				location: {
         					position: {
         						latitude: row.lat,
-        						longitude: row.lng
+        						longitude: row.lng,
+        						altitude: row.altitude,
+        						heading: row.heading,
+        						speed: row.velocity,
+        						horizontal_accuracy: row.hacc,
+        						vertical_accuracy: row.vacc
         					}
         				},
         				client: {
@@ -286,15 +293,23 @@ ControlAssistant.prototype.handleServiceResponse = function(event) {
 	if(this.trackingEnabled == false){
 		return false;
 	}
+
+	// Just ignore duplicate points, if they really are exactly duplicates they're probably not that interesting
+	if(this.lastSeenLat == event.latitude && this.lastSeenLng == event.longitude){
+		return false;
+	}
 	
 	latitude = event.latitude;
 	longitude = event.longitude;
-	$('latitude_area-to-update').update((event.latitude * 1000000).round() / 1000000);
-	$('longitude_area-to-update').update((event.longitude * 1000000).round() / 1000000);
-	this.totalPoints++;
 
+	this.lastSeenLat = latitude;
+	this.lastSeenLng = longitude;
 	
-	var string = 'INSERT INTO positions (date, lat, lng) VALUES ("' + (new Date()).toISOString() + '","' + latitude + '","' + longitude + '"); GO;';
+	$('position_area-to-update').update(((event.latitude * 1000000).round() / 1000000) + ", " + ((event.longitude * 1000000).round() / 1000000));
+	this.totalPoints++;
+	
+	var string = 'INSERT INTO positions (date, lat, lng, heading, velocity, hacc, vacc) VALUES ("' 
+		+ (new Date()).toISOString() + '","' + latitude + '","' + longitude + '","' + event.heading + '","' + event.velocity + '","' + event.horizAccuracy + '","' + event.vertAccuracy + '"); GO;';
 	this.db.transaction( 
         (function (transaction) { 
             transaction.executeSql(string, [], this.createRecordDataHandler.bind(this), this.errorHandler.bind(this)); 
@@ -306,7 +321,7 @@ ControlAssistant.prototype.handleServiceResponse = function(event) {
 	$('num_points-to-update').update(this.totalPoints+" points since program start");
 	var timeDiff = new Date() - this.lastSentToServer;
 
-	$('time-to-next-update').update(Math.round((this.sendingInterval) - (timeDiff/1000)) + " seconds to next push");
+	$('time-to-next-update').update(Math.max(0, Math.round((this.sendingInterval) - (timeDiff/1000))) + " seconds to next push");
 	
 	// If we're due to send to the server, do that now
 	if(timeDiff > (this.sendingInterval * 1000)){
@@ -348,7 +363,11 @@ ControlAssistant.prototype.CreateTable = function(event) {
 		var string = 'CREATE TABLE positions ('
 			+ 'date TEXT NOT NULL DEFAULT "", '
 			+ 'lat TEXT NOT NULL DEFAULT "", '
-			+ 'lng TEXT NOT NULL DEFAULT ""'
+			+ 'lng TEXT NOT NULL DEFAULT "", '
+			+ 'heading TEXT NOT NULL DEFAULT "", '
+			+ 'velocity TEXT NOT NULL DEFAULT "", '
+			+ 'hacc TEXT NOT NULL DEFAULT "", '
+			+ 'vacc TEXT NOT NULL DEFAULT ""'
 			+ '); GO;'
 	    this.db.transaction( 
 	        (function (transaction) { 
