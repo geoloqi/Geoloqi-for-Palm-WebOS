@@ -5,7 +5,12 @@ function ControlAssistant() {
 	   that needs the scene controller should be done in the setup function below. */
 	
 	this.db = null;
+	this.settings = null;
 	this.nullHandleCount = 0;
+
+	this.trackingEnabled = true;
+	this.sendingInterval = 10;
+	this.lastSentToServer = new Date();
 }
 
 ControlAssistant.prototype.setup = function() {
@@ -41,37 +46,42 @@ ControlAssistant.prototype.setup = function() {
 
 	this.CreateTable();
 	
+
+	this.settings = new Mojo.Depot({
+		name: "Geoloqi Settings",
+		estimatedSize: 65536
+	}, 
+	(function(){
+		Mojo.Log.info("Settings db created");
+	}).bind(this),
+	(function(obj){
+		Mojo.Log.info("Settings db failed to be created:", obj);
+	}).bind(this));
+
+	
+	this.settings.get("deviceKey",
+	(function(obj){
+		Mojo.Log.info("Retrieved device key", obj);
+	}).bind(this));
 	
 	
 	this.totalPoints = 0;
 	
-    // Request continuous location updates
-	this.controller.serviceRequest('palm://com.palm.location', {
-		method : 'startTracking',
-        parameters: {
-            subscribe: true
-    	},
-        onSuccess: this.handleServiceResponse.bind(this),
-        onFailure: this.handleServiceResponseError.bind(this)
-    });
-
+	this.startTracking();
     
-	// Set a timer for sending the queued points to the server
-	this.scheduleSendToServer();
-	
-	Mojo.Event.listen(this.controller.get("sendingIntervalSlider"), Mojo.Event.propertyChange, this.handleUpdateSending);
+	Mojo.Event.listen(this.controller.get("sendingIntervalSlider"), Mojo.Event.propertyChange, this.handleUpdateSending.bind(this));
     this.controller.setupWidget("sendingIntervalSlider",
 		this.attributes = {
-			minValue: 0,
-			maxValue: 100
+			minValue: 10,
+			maxValue: 120
 		},
 		this.model = {
-			value: 3,
+			value: 10,
 			disabled: false
 		}
 	);
 
-	Mojo.Event.listen(this.controller.get("distanceFilterSlider"), Mojo.Event.propertyChange, this.handleUpdateDistance);
+	Mojo.Event.listen(this.controller.get("distanceFilterSlider"), Mojo.Event.propertyChange, this.handleUpdateDistance.bind(this));
     this.controller.setupWidget("distanceFilterSlider",
 		this.attributes = {
 			minValue: 0,
@@ -83,64 +93,180 @@ ControlAssistant.prototype.setup = function() {
 		}
 	);
 
-	Mojo.Event.listen(this.controller.get("timeSlider"), Mojo.Event.propertyChange, this.handleUpdateTime);
+	Mojo.Event.listen(this.controller.get("timeSlider"), Mojo.Event.propertyChange, this.handleUpdateTime.bind(this));
     this.controller.setupWidget("timeSlider",
 		this.attributes = {
-			minValue: 0,
-			maxValue: 100
+			minValue: 10,
+			maxValue: 120
 		},
 		this.model = {
-			value: 3,
+			value: 10,
 			disabled: false
 		}
 	);
 
+    Mojo.Event.listen(this.controller.get("trackingBtn"), Mojo.Event.propertyChange, this.handleUpdateTracking.bind(this));
+    this.controller.setupWidget('trackingBtn', {
+		modelProperty: "value"
+	}, {
+		value: true
+	});
+    
+	// Set a timer for sending the queued points to the server
+	//this.scheduleSendToServer();
+
+	Mojo.Log.info(typeof this.db);
+
+	this.sendQueuedPointsToServerHandler = this.sendQueuedPointsToServer.bind(this);
 };
 
+
+ControlAssistant.prototype.startTracking = function(){
+    // Request continuous location updates
+	this.controller.serviceRequest('palm://com.palm.location', {
+		method : 'startTracking',
+        parameters: {
+            subscribe: true
+    	},
+        onSuccess: this.handleServiceResponse.bind(this),
+        onFailure: this.handleServiceResponseError.bind(this)
+    });
+}
+
+ControlAssistant.prototype.stopTracking = function(){
+	this.controller.serviceRequest('palm://com.palm.location', {
+		method : 'stopTracking',
+        parameters: {},
+        onSuccess: this.handleServiceResponseError.bind(this),
+        onFailure: this.handleServiceResponseError.bind(this)
+    });
+}
+
+
+ControlAssistant.prototype.sendQueuedPointsToServer = function(){
+	
+	var string = 'SELECT * FROM positions ORDER BY date LIMIT 100; GO;';
+
+	var points = [];
+	
+	this.db.transaction(
+        (function (transaction) {
+            transaction.executeSql(string, [], (function(transaction, results){
+        		for (var i = 0; i < results.rows.length; i++) {
+        			var row = results.rows.item(i);
+        			Mojo.Log.info(row.date, row.lat, row.lng);
+        			
+        			points.push({
+        				date: row.date,
+        				location: {
+        					position: {
+        						latitude: row.lat,
+        						longitude: row.lng
+        					}
+        				},
+        				client: {
+        					name: "Geoloqi",
+        					version: "0.1",
+        					platform: "Palm WebOS"
+        				}
+        			});
+        			
+        		}
+
+        		var posturl='http://api.geoloqi.com/api/location/key/35884837672092222226372345887549';
+        		var postdata = Object.toJSON(points);
+        		 
+        		var myAjax = new Ajax.Request(posturl, {
+        		 	method: 'post',
+        		 	evalJSON: 'force',
+        		 	postBody: postdata,
+        		 	contentType: 'application/json',
+        		 	onComplete: (function(transport){
+        		 		if (transport.status == 200){
+        					Mojo.Log.info('Success!');
+        		 			this.lastSentToServer = new Date();
+        		 		}
+        				else {
+        					Mojo.Log.error('Failed with response ' + Object.toJSON(transport));
+        				}
+        		 		Mojo.Log.info('Server Response: ' + transport.responseText);			
+        		 	}).bind(this),
+        		 	onFailure: (function(transport){
+        		 		Mojo.Log.error('Failure! ' + transport.responseText);
+        		 	}).bind(this)
+        		});
+        		
+        		for (var i = 0; i < results.rows.length; i++) {
+        			var row = results.rows.item(i);
+        			this.deleteLocation(row.date);
+        		}
+        		
+            }).bind(this), this.errorHandler.bind(this));
+        }).bind(this)
+    );
+};
+
+
+ControlAssistant.prototype.deleteLocation = function(date){
+    this.db.transaction( 
+        (function (transaction) { 
+            transaction.executeSql("DELETE FROM positions WHERE date = '"+ date +"'; GO;", [], (function(tx, results){
+            }).bind(this), this.errorHandler.bind(this)); 
+        }).bind(this) 
+    );
+}
 
 ControlAssistant.prototype.handleUpdateSending = function(event){
-	Mojo.Log.info("Slider is at:", event.value);
+	Mojo.Log.info("Sending Slider is at:", event.value);
+	this.sendingInterval = event.value;
 };
 ControlAssistant.prototype.handleUpdateDistance = function(event){
-	Mojo.Log.info("Slider is at:", event.value);
+	Mojo.Log.info("Distance Slider is at:", event.value);
 };
 ControlAssistant.prototype.handleUpdateTime = function(event){
-	Mojo.Log.info("Slider is at:", event.value);
+	Mojo.Log.info("Time Slider is at:", event.value);
 };
+ControlAssistant.prototype.handleUpdateTracking = function(event){
+	Mojo.Log.info("Updates", event.value);
+	this.trackingEnabled = event.value;
+}
 
 
 //This function schedules the timeout task
+/*
 ControlAssistant.prototype.scheduleSendToServer = function(){
-try
-{
-	//parameters for the alarm service call	
-	var params = {
-		"wakeup": true,
-		"key": "geoloqitimer",
-		"uri": "palm://com.palm.applicationManager/open",
-		"params": '{"id":"com.geoloqi.geoloqigpstracker","params":{"message": "Alarm says send queued points now"}}',
-		"in": "00:05:00"
-	}
-
-    //set the alarm
-	this.controller.serviceRequest('palm://com.palm.power/timeout', { 
-		method: "set",
-		parameters: params,
-		onSuccess:  (function(response){
-			Mojo.Log.info("Scheduled timer successfully");
-		}).bind(this),
-		onFailure: (function(response){
-			Mojo.Log.error("Problem setting timer:", Object.toJSON(response));
-		}).bind(this)
-	});
+	try
+	{
+		//parameters for the alarm service call	
+		var params = {
+			"wakeup": true,
+			"key": "geoloqitimer",
+			"uri": "palm://com.palm.applicationManager/open",
+			"params": '{"id":"com.geoloqi.geoloqigpstracker","params":{"message": "Alarm says send queued points now"}}',
+			"in": "00:05:00"
+		}
 	
-	Mojo.Log.info("Setting alarm for", params["in"]);
+	    //set the alarm
+		this.controller.serviceRequest('palm://com.palm.power/timeout', { 
+			method: "set",
+			parameters: params,
+			onSuccess:  (function(response){
+				Mojo.Log.info("Scheduled timer successfully");
+			}).bind(this),
+			onFailure: (function(response){
+				Mojo.Log.error("Problem setting timer:", Object.toJSON(response));
+			}).bind(this)
+		});
+		
+		Mojo.Log.info("Setting alarm for", params["in"]);
+	}
+	catch(e)
+	{
+		this.controller.error(e);
+	}
 }
-catch(e)
-{
-	this.controller.error(e);
-}
-}
+*/
+
 /*
 ControlAssistant.prototype.handleButtonPressed = function(event) {
     this.controller.serviceRequest('palm://com.palm.location', {
@@ -156,15 +282,17 @@ ControlAssistant.prototype.handleButtonPressed = function(event) {
 */
 
 ControlAssistant.prototype.handleServiceResponse = function(event) {
-	/* put in event handlers here that should only be in effect when this scene is active. For
-	   example, key handlers that are observing the document */
+	
+	if(this.trackingEnabled == false){
+		return false;
+	}
+	
 	latitude = event.latitude;
 	longitude = event.longitude;
 	$('latitude_area-to-update').update((event.latitude * 1000000).round() / 1000000);
 	$('longitude_area-to-update').update((event.longitude * 1000000).round() / 1000000);
 	this.totalPoints++;
 
-	
 	
 	var string = 'INSERT INTO positions (date, lat, lng) VALUES ("' + (new Date()).toISOString() + '","' + latitude + '","' + longitude + '"); GO;';
 	this.db.transaction( 
@@ -173,10 +301,19 @@ ControlAssistant.prototype.handleServiceResponse = function(event) {
         }).bind(this) 
     );
 	
-
 	//this.controller.info("Received location", latitude, longitude, this.totalPoints, "points received");
 	
-	$('num_points-to-update').update(this.totalPoints+" points since last launch");
+	$('num_points-to-update').update(this.totalPoints+" points since program start");
+	var timeDiff = new Date() - this.lastSentToServer;
+
+	$('time-to-next-update').update(Math.round((this.sendingInterval) - (timeDiff/1000)) + " seconds to next push");
+	
+	// If we're due to send to the server, do that now
+	if(timeDiff > (this.sendingInterval * 1000)){
+		Mojo.Log.info("GPS point received, seconds since last push to server:", (timeDiff / 1000))
+		this.sendQueuedPointsToServer();
+	}
+	
 }
 ControlAssistant.prototype.handleServiceResponseError = function(event) {
 	/* put in event handlers here that should only be in effect when this scene is active. For
@@ -215,6 +352,7 @@ ControlAssistant.prototype.CreateTable = function(event) {
 			+ '); GO;'
 	    this.db.transaction( 
 	        (function (transaction) { 
+	        	//transaction.executeSql('DROP TABLE IF EXISTS positions; GO;', [], (function(){}).bind(this), this.errorHandler.bind(this));
 	            transaction.executeSql(string, [], this.createTableDataHandler.bind(this), this.errorHandler.bind(this)); 
 	        }).bind(this) 
 	    );
