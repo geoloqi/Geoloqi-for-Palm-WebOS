@@ -4,10 +4,13 @@ function ControlAssistant() {
 	   to the scene controller (this.controller) has not be established yet, so any initialization
 	   that needs the scene controller should be done in the setup function below. */
 	
-	this.db = null;
-	this.settings = null;
+	this.db = null; // sqlite db handle
+	this.settings = null; // Mojo Depot db handle
 	this.nullHandleCount = 0;
 
+	this.deviceKey = '1234567890'; // null
+	this.dropPositionsTable = false; // if this is set, the internal positions table is dropped every app load
+	
 	this.trackingEnabled = true;
 	this.sendingInterval = 10;
 	this.lastSentToServer = new Date();
@@ -23,16 +26,6 @@ ControlAssistant.prototype.setup = function() {
 	/* setup widgets here */
 	
 	/* add event handlers to listen to events from widgets */
-	/*
-	this.buttonModel = {
-		buttonLabel : 'Go!!',
-		buttonClass : 'affirmative',
-		disable : false
-	}
-	this.buttonAtt = {
-		type: 'activity'
-	}
-	*/
 	
 	/* create sqlite database */
 	
@@ -114,8 +107,21 @@ ControlAssistant.prototype.setup = function() {
 		value: true
 	});
     
-	// Set a timer for sending the queued points to the server
-	//this.scheduleSendToServer();
+	// Set a timer 
+	this.setAppTimer();
+	this.controller.serviceRequest("palm://com.palm.power/com/palm/power", {
+	    method: "activityStart",
+	    parameters: {
+	        id: "com.geoloqi.geoloqigpstracker.alarm-1",
+	        duration_ms: "290000"
+	    },
+	    onSuccess: (function(){
+	    	Mojo.Log.info("Started activity timer");
+	    }).bind(this),
+	    onFailure: (function(){
+	    	Mojo.Log.error("Failed to start activity timer");
+	    }).bind(this)
+	});
 
 	Mojo.Log.info(typeof this.db);
 
@@ -124,22 +130,13 @@ ControlAssistant.prototype.setup = function() {
 
 
 ControlAssistant.prototype.startTracking = function(){
-    // Request continuous location updates
+	// Request continuous location updates
 	this.controller.serviceRequest('palm://com.palm.location', {
 		method : 'startTracking',
         parameters: {
             subscribe: true
     	},
         onSuccess: this.handleServiceResponse.bind(this),
-        onFailure: this.handleServiceResponseError.bind(this)
-    });
-}
-
-ControlAssistant.prototype.stopTracking = function(){
-	this.controller.serviceRequest('palm://com.palm.location', {
-		method : 'stopTracking',
-        parameters: {},
-        onSuccess: this.handleServiceResponseError.bind(this),
         onFailure: this.handleServiceResponseError.bind(this)
     });
 }
@@ -157,51 +154,10 @@ ControlAssistant.prototype.sendQueuedPointsToServer = function(){
         		for (var i = 0; i < results.rows.length; i++) {
         			var row = results.rows.item(i);
         			Mojo.Log.info(row.date, row.lat, row.lng);
-        			
-        			points.push({
-        				date: row.date,
-        				location: {
-        					position: {
-        						latitude: row.lat,
-        						longitude: row.lng,
-        						altitude: row.altitude,
-        						heading: row.heading,
-        						speed: row.velocity,
-        						horizontal_accuracy: row.hacc,
-        						vertical_accuracy: row.vacc
-        					}
-        				},
-        				client: {
-        					name: "Geoloqi",
-        					version: "0.1",
-        					platform: "Palm WebOS"
-        				}
-        			});
-        			
+        			points.push(this.buildJSONPoint(row));
         		}
 
-        		var posturl='http://api.geoloqi.com/api/location/key/35884837672092222226372345887549';
-        		var postdata = Object.toJSON(points);
-        		 
-        		var myAjax = new Ajax.Request(posturl, {
-        		 	method: 'post',
-        		 	evalJSON: 'force',
-        		 	postBody: postdata,
-        		 	contentType: 'application/json',
-        		 	onComplete: (function(transport){
-        		 		if (transport.status == 200){
-        					Mojo.Log.info('Success!');
-        		 			this.lastSentToServer = new Date();
-        		 		}
-        				else {
-        					Mojo.Log.error('Failed with response ' + Object.toJSON(transport));
-        				}
-        		 		Mojo.Log.info('Server Response: ' + transport.responseText);			
-        		 	}).bind(this),
-        		 	onFailure: (function(transport){
-        		 		Mojo.Log.error('Failure! ' + transport.responseText);
-        		 	}).bind(this)
-        		});
+        		this.sendToServer(points);
         		
         		for (var i = 0; i < results.rows.length; i++) {
         			var row = results.rows.item(i);
@@ -214,6 +170,57 @@ ControlAssistant.prototype.sendQueuedPointsToServer = function(){
 };
 
 
+ControlAssistant.prototype.buildJSONPoint = function(row){
+	return {
+		date: row.date,
+		location: {
+			position: {
+				latitude: row.lat,
+				longitude: row.lng,
+				altitude: row.altitude,
+				heading: row.heading,
+				speed: row.velocity,
+				horizontal_accuracy: row.hacc,
+				vertical_accuracy: row.vacc
+			},
+			type: "latlng",
+			raw: row.other
+		},
+		client: {
+			name: "Geoloqi",
+			version: "0.1",
+			platform: "Palm WebOS"
+		}
+	};
+};
+
+
+ControlAssistant.prototype.sendToServer = function(points){
+	var posturl='http://api.geoloqi.com/api/location/key/' + this.deviceKey;
+	var postdata = Object.toJSON(points);
+	 
+	var myAjax = new Ajax.Request(posturl, {
+	 	method: 'post',
+	 	evalJSON: 'force',
+	 	postBody: postdata,
+	 	contentType: 'application/json',
+	 	onComplete: (function(transport){
+	 		if (transport.status == 200){
+				Mojo.Log.info('Success!');
+	 			this.lastSentToServer = new Date();
+	 		}
+			else {
+				Mojo.Log.error('Failed with response ' + Object.toJSON(transport));
+			}
+	 		Mojo.Log.info('Server Response: ' + transport.responseText);			
+	 	}).bind(this),
+	 	onFailure: (function(transport){
+	 		Mojo.Log.error('Failure! ' + transport.responseText);
+	 	}).bind(this)
+	});
+};
+
+
 ControlAssistant.prototype.deleteLocation = function(date){
     this.db.transaction( 
         (function (transaction) { 
@@ -221,7 +228,7 @@ ControlAssistant.prototype.deleteLocation = function(date){
             }).bind(this), this.errorHandler.bind(this)); 
         }).bind(this) 
     );
-}
+};
 
 ControlAssistant.prototype.handleUpdateSending = function(event){
 	Mojo.Log.info("Sending Slider is at:", event.value);
@@ -241,7 +248,7 @@ ControlAssistant.prototype.handleUpdateTracking = function(event){
 
 //This function schedules the timeout task
 /*
-ControlAssistant.prototype.scheduleSendToServer = function(){
+ControlAssistant.prototype.setAppTimer = function(){
 	try
 	{
 		//parameters for the alarm service call	
@@ -307,14 +314,8 @@ ControlAssistant.prototype.handleServiceResponse = function(event) {
 	
 	$('position_area-to-update').update(((event.latitude * 1000000).round() / 1000000) + ", " + ((event.longitude * 1000000).round() / 1000000));
 	this.totalPoints++;
-	
-	var string = 'INSERT INTO positions (date, lat, lng, heading, velocity, hacc, vacc) VALUES ("' 
-		+ (new Date()).toISOString() + '","' + latitude + '","' + longitude + '","' + event.heading + '","' + event.velocity + '","' + event.horizAccuracy + '","' + event.vertAccuracy + '"); GO;';
-	this.db.transaction( 
-        (function (transaction) { 
-            transaction.executeSql(string, [], this.createRecordDataHandler.bind(this), this.errorHandler.bind(this)); 
-        }).bind(this) 
-    );
+
+	this.queueLocationPoint(event.latitude, event.longitude, event.heading, event.velocity, event.horizAccuracy, event.vertAccuracy, {type: "continuousUpdates"});
 	
 	//this.controller.info("Received location", latitude, longitude, this.totalPoints, "points received");
 	
@@ -337,6 +338,19 @@ ControlAssistant.prototype.handleServiceResponseError = function(event) {
     this.controller.error("Get Location error:", Object.toJSON(event));
 }
 
+
+ControlAssistant.prototype.queueLocationPoint = function(lat, lng, hdg, vel, hacc, vacc, other){
+	var otherStr = Object.toJSON(other);
+	
+	var string = 'INSERT INTO positions (date, lat, lng, heading, velocity, hacc, vacc, other) VALUES ("' 
+		+ (new Date()).toISOString() + '","' + lat + '","' + lng + '","' + hdg + '","' + vel + '","' + hacc + '","' + vacc + '",\'' + otherStr + '\'); GO;';
+	this.db.transaction( 
+        (function (transaction) { 
+            transaction.executeSql(string, [], this.createRecordDataHandler.bind(this), this.errorHandler.bind(this)); 
+        }).bind(this) 
+    );
+
+};
 
 
 ControlAssistant.prototype.activate = function(event) {
@@ -367,11 +381,14 @@ ControlAssistant.prototype.CreateTable = function(event) {
 			+ 'heading TEXT NOT NULL DEFAULT "", '
 			+ 'velocity TEXT NOT NULL DEFAULT "", '
 			+ 'hacc TEXT NOT NULL DEFAULT "", '
-			+ 'vacc TEXT NOT NULL DEFAULT ""'
+			+ 'vacc TEXT NOT NULL DEFAULT "", '
+			+ 'other TEXT NOT NULL DEFAULT ""'
 			+ '); GO;'
 	    this.db.transaction( 
-	        (function (transaction) { 
-	        	//transaction.executeSql('DROP TABLE IF EXISTS positions; GO;', [], (function(){}).bind(this), this.errorHandler.bind(this));
+	        (function (transaction) {
+	        	if(this.dropPositionsTable){
+	        		transaction.executeSql('DROP TABLE IF EXISTS positions; GO;', [], (function(){}).bind(this), this.errorHandler.bind(this));
+	        	}
 	            transaction.executeSql(string, [], this.createTableDataHandler.bind(this), this.errorHandler.bind(this)); 
 	        }).bind(this) 
 	    );
@@ -386,7 +403,7 @@ ControlAssistant.prototype.CreateTable = function(event) {
 
 ControlAssistant.prototype.createTableDataHandler = function(transaction, results) 
 {
-	this.controller.info("Created TABLE locations");
+	this.controller.info("Created TABLE positions");
 } 
 
 ControlAssistant.prototype.createRecordDataHandler = function(transaction, results) 
@@ -409,6 +426,7 @@ ControlAssistant.prototype.createRecordDataHandler = function(transaction, resul
 ControlAssistant.prototype.errorHandler = function(transaction, error) 
 { 
     this.controller.error('Error was '+error.message+' (Code '+error.code+')');
+    //$('error_area-to-update').update('Error was '+error.message+' (Code '+error.code+')');
     return true;
 }
 
